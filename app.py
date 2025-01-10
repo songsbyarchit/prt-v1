@@ -1,7 +1,7 @@
 import os
 import subprocess
-import sys
 from dotenv import load_dotenv
+import sys
 import openai
 
 # Automatically install missing dependencies
@@ -37,32 +37,51 @@ MODES = {
 }
 
 def chat_with_mode(mode, conversation_history):
-    system_prompt = f"You are a tool for {MODES[mode]['name']}. Always maintain this voice: {MODES[mode]['style']}"
-    messages = [{"role": "system", "content": system_prompt}] + conversation_history
-    
-    # Collect user input
-    user_input = input("You: ")
-    if user_input.lower() in ["exit", "quit"]:
-        print("Exiting the conversation.")
-        return None  # Exit the conversation
-
-    # Append user input to the conversation history
-    conversation_history.append({"role": "user", "content": user_input})
-
-    # Call the OpenAI API
-    response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",  # Use GPT-3.5-turbo
-        messages=messages
+    # Define the system prompt with instructions to keep responses concise
+    system_prompt = (
+        f"You are a tool for {MODES[mode]['name']}. "
+        f"Always maintain this voice: {MODES[mode]['style']} "
+        f"Do not provide actions, solutions, or advice. "
+        f"Respond empathetically and always end with a soft, open-ended question."
     )
-
-    # Extract and display the assistant's reply
-    assistant_reply = response["choices"][0]["message"]["content"]
-    print(f"{MODES[mode]['name']} ({MODES[mode]['name']}): {assistant_reply}")
     
-    # Append assistant reply to the conversation history
-    conversation_history.append({"role": "assistant", "content": assistant_reply})
+    # Initialize the conversation with the system message
+    messages = [{"role": "system", "content": system_prompt}]
+    
+    # Add an initial assistant message based on the mode
+    initial_message = {
+        1: "Hello, I'm here to provide emotional support. What's on your mind?",
+        2: "Hi! Let's document your day. What's something memorable today?",
+        3: "Hey! Let's plan for your future. What's your main goal?",
+    }
+    assistant_initial_reply = initial_message[mode]
+    print(f"{MODES[mode]['name']} ({MODES[mode]['name']}): {assistant_initial_reply}")
+    
+    # Append the assistant's initial reply to the conversation history
+    conversation_history.append({"role": "assistant", "content": assistant_initial_reply})
 
-    return conversation_history
+    while True:
+        # Collect user input
+        user_input = input("You: ")
+        if user_input.lower() in ["exit", "quit"]:
+            print("Exiting the conversation.")
+            return None  # Exit the conversation
+
+        # Append user input to the conversation history
+        conversation_history.append({"role": "user", "content": user_input})
+
+        # Call the OpenAI API
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",  # Use GPT-3.5-turbo
+            messages=[{"role": "system", "content": system_prompt}] + conversation_history
+        )
+
+        # Extract and display the assistant's reply
+        assistant_reply = response["choices"][0]["message"]["content"]
+        print(f"{MODES[mode]['name']} ({MODES[mode]['name']}): {assistant_reply}")
+
+        # Append the assistant's reply to the conversation history
+        conversation_history.append({"role": "assistant", "content": assistant_reply})
 
 def main():
     print("Welcome to the Personalized Reflection Tool!")
