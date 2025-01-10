@@ -3,6 +3,7 @@ import subprocess
 from dotenv import load_dotenv
 import sys
 import openai
+from modes import MODES
 
 # Automatically install missing dependencies
 def install_dependencies():
@@ -20,23 +21,8 @@ install_dependencies()
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# Define modes and corresponding voice styles
-MODES = {
-    1: {
-        "name": "Emotional Support",
-        "style": "Respond with empathy, compassion, and supportive language. Use a calm and soothing tone.",
-    },
-    2: {
-        "name": "Journaling",
-        "style": "Respond as a reflective listener, prompting with open-ended questions and encouragement for elaboration.",
-    },
-    3: {
-        "name": "Planning",
-        "style": "Respond with structured, goal-oriented language. Be methodical and proactive in offering solutions."
-    }
-}
 
-def chat_with_mode(mode, conversation_history):
+def chat_with_mode(mode, sub_mode, conversation_history):
     # Define the system prompt with instructions to keep responses concise
     system_prompt = (
         f"You are a tool for {MODES[mode]['name']}. "
@@ -48,13 +34,25 @@ def chat_with_mode(mode, conversation_history):
     # Initialize the conversation with the system message
     messages = [{"role": "system", "content": system_prompt}]
     
-    # Add an initial assistant message based on the mode
-    initial_message = {
-        1: "Hello, I'm here to provide emotional support. What's on your mind?",
-        2: "Hi! Let's document your day. What's something memorable today?",
-        3: "Hey! Let's plan for your future. What's your main goal?",
+    # Add an initial assistant message based on the mode and sub-mode
+    initial_messages = {
+        1: {
+            1: "I'm here to understand you better. What's on your mind?",
+            2: "I'm here to provide comfort. How are you feeling right now?",
+            3: "Let's find some positivity together. What's something you're proud of today?",
+        },
+        2: {
+            1: "What emotions stood out to you today? Let's reflect together.",
+            2: "Tell me about the events that made your day unique.",
+            3: "What’s one thing you feel grateful for today?",
+        },
+        3: {
+            1: "What personal goal is on your mind right now?",
+            2: "What’s something you want to plan for work or studies?",
+            3: "What’s a dream or aspiration you want to work toward?",
+        },
     }
-    assistant_initial_reply = initial_message[mode]
+    assistant_initial_reply = initial_messages[mode][sub_mode]
     print(f"{MODES[mode]['name']} ({MODES[mode]['name']}): {assistant_initial_reply}")
     
     # Append the assistant's initial reply to the conversation history
@@ -84,28 +82,32 @@ def chat_with_mode(mode, conversation_history):
         conversation_history.append({"role": "assistant", "content": assistant_reply})
 
 def main():
-    print("Welcome to the Personalized Reflection Tool!")
-    print("Choose a mode:")
-    print("1: Dealing with Negative or Overwhelming Emotions")
-    print("2: Journaling and Documenting Your Day")
-    print("3: Planning for the Future")
+    mode = int(input("What would you like to do?\n1: Emotional Support\n2: Journaling\n3: Planning\nSelect a mode (1, 2, or 3): "))
+    if mode not in MODES:
+        print("Invalid mode selected. Exiting.")
+        return
+
+    print(f"\nYou selected: {MODES[mode]['name']}")
+    sub_modes = MODES[mode]['style']
+    for sub_mode_key, sub_mode_description in sub_modes.items():
+        print(f"{sub_mode_key}: {sub_mode_description.split(':')[0]}")
+
+    sub_mode = int(input("Select a sub-mode (1, 2, or 3): "))
+    if sub_mode not in sub_modes:
+        print("Invalid sub-mode selected. Exiting.")
+        return
     
     try:
-        mode = int(input("Select a mode (1, 2, or 3): "))
-        if mode not in MODES:
-            print("Invalid mode selected. Exiting.")
-            return
-        
-        print(f"You've selected: {MODES[mode]['name']}")
+        print(f"You've selected: {MODES[mode]['name']} - {sub_modes[sub_mode].split(':')[0]}")
         print("Type 'exit' or 'quit' to end the conversation.")
         
-        conversation_history = []
+        conversation_history = []  # Initialize conversation history as an empty list
+        conversation_history = chat_with_mode(mode, sub_mode, conversation_history)
         while True:
-            conversation_history = chat_with_mode(mode, conversation_history)
             if conversation_history is None:
                 break
     except ValueError:
-        print("Please enter a valid mode number.")
+        print("Please enter a valid mode and sub-mode number.")
 
 if __name__ == "__main__":
     main()
