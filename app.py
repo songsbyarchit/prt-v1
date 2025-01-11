@@ -5,15 +5,17 @@ import sys
 import openai
 from metrics_analyzer import analyze_metrics
 from modes import MODES
+from flask import Flask, render_template, request, jsonify
+
+app = Flask(__name__, template_folder="static/templates")
 
 # Automatically install missing dependencies
 def install_dependencies():
     try:
-        import openai  # Check if the openai library is installed
-        import dotenv  # Check if dotenv is installed
-    except ImportError:
-        print("Installing dependencies...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
+        print("All dependencies from requirements.txt are installed.")
+    except subprocess.CalledProcessError as e:
+        print("An error occurred while installing dependencies:", e)
 
 # Ensure dependencies are installed
 install_dependencies()
@@ -21,6 +23,7 @@ install_dependencies()
 # Load environment variables
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
+elevenlabs_api_key = os.getenv("ELEVENLABS_API_KEY")
 
 def generate_dynamic_prompt(metrics, user_input):
     return (
@@ -124,5 +127,27 @@ def main():
     # Start the conversation using the chat_with_dynamic_prompt function
     chat_with_dynamic_prompt(system_prompt, conversation_history)
 
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+@app.route("/process-transcript", methods=["POST"])
+def process_transcript():
+    data = request.get_json()
+    transcript = data.get("transcript", "")
+    
+    if not transcript:
+        return jsonify({"error": "No transcript provided"}), 400
+
+    # Process the transcript
+    metrics = analyze_metrics(transcript)
+    system_prompt = generate_dynamic_prompt(metrics, transcript)
+
+    # Return the metrics and system prompt for debugging purposes (can be removed later)
+    return jsonify({
+        "metrics": metrics,
+        "response_prompt": system_prompt
+    })
+
 if __name__ == "__main__":
-    main()
+    app.run(debug=True)
