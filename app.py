@@ -7,6 +7,7 @@ from metrics_analyzer import analyze_metrics
 from modes import MODES
 from flask import Flask, render_template, request, jsonify, send_from_directory
 import requests
+import time
 
 app = Flask(__name__, template_folder="static/templates")
 
@@ -27,13 +28,13 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 elevenlabs_api_key = os.getenv("ELEVENLABS_API_KEY")
 voice_id = os.getenv("VOICE_ID")
 
+conversation_history = []
+
 def generate_dynamic_prompt(metrics, user_input):
     return (
-        "You are a highly adaptive conversational assistant whose responses are dynamically influenced by the user's needs, "
-        "as represented by the following 10 conversational metrics. Each metric determines the balance between two polarities "
-        "that guide your tone, style, and content. These values are not static but must be actively considered in each response, "
-        "so that noticeable shifts in your conversational style occur when the values change. Always integrate these metrics into "
-        "your reasoning to ensure the user feels their tone and needs are being uniquely understood and reflected.\n\n"
+        "You are a reflection assistant whose role is to help the user explore their thoughts by guiding them through questions. "
+        "Your responses MUST NOT provide advice or solutions. Instead, your role is to ask open-ended questions that help the user explore their feelings, thoughts, and actions more deeply. "
+        "Focus on prompting the user to reflect and think critically about their own experiences, avoiding providing any prescriptive solutions.\n\n"
         + "\n".join(
             [
                 f"{metric}: {value}% {metric.split(' vs. ')[0].lower()}, {100 - value}% {metric.split(' vs. ')[1].lower()}."
@@ -41,13 +42,15 @@ def generate_dynamic_prompt(metrics, user_input):
             ]
         )
         + f"\n\nThe conversation begins with the user saying:\n'{user_input}'\n\n"
-        "Use this input and the calculated metrics to craft a dynamic and relevant initial response. "
-        "Focus on addressing the user's specific needs, tone, and intent as reflected in their input.\n\n"
+        "Craft your response accordingly. Keep your response brief and to the point."
+        "Your responses MUST be brief - a MAXIMUM of 30 words, or you'll be fired from your role."
+        "Your responses MUST focus on asking reflective questions that prompt the user to explore their feelings, thoughts, and reasoning.\n\n"
+        "Do NOT offer solutions, only questions. Guide their thoughts through curiosity and reflection.\n\n"
         "Detailed guidance on adapting to the metrics:\n"
         "1. **Logic vs. Emotion**: Balance between logical reasoning and emotional empathy in your tone and content. "
         "For example, a response that is 70% logical should focus on objective reasoning, while retaining 30% emotional sensitivity.\n"
-        "2. **Action vs. Thinking**: Prioritize actionable advice or introspective, reflective questions based on the percentage. "
-        "A response that is 80% action-oriented should focus on clear next steps, while 20% reflective tones invite the user to pause and think.\n"
+        "2. **Action vs. Thinking**: Prioritize introspective, reflective questions based on the percentage. "
+        "A response that is 80% action-oriented should focus on prompting clear next steps, while 20% reflective tones invite the user to pause and think.\n"
         "3. **Directness vs. Subtlety**: Shape your language to be straightforward or nuanced. A higher directness percentage "
         "means concise, explicit communication, while a higher subtlety percentage implies tactful and layered suggestions.\n"
         "4. **Optimism vs. Realism**: Tailor your tone to be encouraging and hopeful or grounded and practical. "
@@ -69,17 +72,116 @@ def generate_dynamic_prompt(metrics, user_input):
         "Conclude every response with a soft, open-ended question to invite further engagement."
     )
 
+def calculate_input_tokens(messages):
+    # Calculate the number of tokens used by the input
+    return sum(len(message['content'].split()) for message in messages)
+
+@app.route("/process-transcript", methods=["POST"])
+def process_transcript():
+    try:
+        data = request.get_json()
+        transcript = data.get("transcript", "")
+        
+        if not transcript:
+            return jsonify({"error": "No transcript provided"}), 400
+
+        metrics = analyze_metrics(transcript)
+        system_prompt = generate_dynamic_prompt(metrics, transcript)
+
+        # Map metrics to voice parameters
+        stability, clarity, pitch, speed, depth = map_metrics_to_voice_params(metrics)
+
+        # Append user input to conversation history
+        # Maintain global conversation history to keep track of the entire conversation
+        conversation_history.append({"role": "user", "content": transcript})
+
+        # Log conversation history to check what's being sent to OpenAI
+        print(f"Sending request to OpenAI with the following conversation history:\n{conversation_history}")
+
+        # Calculate input tokens
+        input_tokens = calculate_input_tokens(conversation_history)
+
+        # Define max total tokens to limit the total number of tokens (4096 for GPT-3.5)
+        max_total_tokens = 4096  # GPT-3.5 token limit
+
+        # Calculate input tokens
+        input_tokens = calculate_input_tokens(conversation_history)
+
+        # Calculate remaining tokens for output
+        remaining_tokens_for_output = max_total_tokens - input_tokens
+
+        # Set max tokens for output (you can adjust this as per your needs)
+        max_output_tokens = min(remaining_tokens_for_output, 100)  # For example, 100 tokens output
+
+        # Make API call with the calculated max tokens for output
+        response_openai = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=conversation_history,  # Send the conversation history to maintain context
+            max_tokens=max_output_tokens
+        )
+
+        print(f"Received response from OpenAI: {response_openai['choices'][0]['message']['content']}")
+
+        assistant_reply = response_openai["choices"][0]["message"]["content"]  # Get the assistant's reply
+
+        # Log the assistant's reply being sent to ElevenLabs for voice generation
+        print(f"Sending request to ElevenLabs with the following assistant reply:\n{assistant_reply}")
+
+        # Call ElevenLabs API to generate the audio
+        response = requests.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+            headers={"xi-api-key": elevenlabs_api_key, "Content-Type": "application/json"},
+            json={
+                "text": assistant_reply,  # Send the assistant's response
+                "model_id": "eleven_monolingual_v1"
+            }
+        )
+
+        # Log the response from ElevenLabs to check for issues
+        if response.status_code == 200:
+            print(f"ElevenLabs response received successfully, content length: {len(response.content)}")
+            voice_response = response.content
+        else:
+            print(f"Failed to generate audio with ElevenLabs. Status code: {response.status_code}, Error: {response.text}")
+            return jsonify({"error": "Failed to generate audio"}), 500
+
+        if response.status_code == 200:
+            voice_response = response.content
+        else:
+            print("Failed to generate audio. Error:", response.text)
+            return jsonify({"error": "Failed to generate audio"}), 500
+
+        # Save the audio response with a unique filename (including a timestamp)
+        timestamp = int(time.time())
+        audio_filename = f"response_{timestamp}.mp3"
+        print(f"Returning audio file: {audio_filename}")
+
+        with open(audio_filename, "wb") as audio_file:
+            audio_file.write(voice_response)
+
+        # Return the path of the new audio file in the response
+        return jsonify({
+            "metrics": metrics,
+            "response_prompt": system_prompt,
+            "audio_generated": True,
+            "audio_file": audio_filename  # This will just return the audio filename (e.g., response_1736608762.mp3)
+        })
+            
+    except Exception as e:
+        # Print the error to the console for debugging
+        print("Error in process_transcript:", str(e))
+        # Return the error message to the client
+        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+
 def chat_with_dynamic_prompt(system_prompt, conversation_history):
+    max_total_tokens = 4096  # GPT-3.5 token limit
     # Initialize the conversation with the system message
     messages = [{"role": "system", "content": system_prompt}]
 
     # Generate the initial assistant message based on the system prompt and metrics
     response = openai.ChatCompletion.create(
         model="gpt-3.5-turbo",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"The user said: '{conversation_history[0]['content']}'" if conversation_history else ""}
-        ]
+        messages=messages + conversation_history
     )
 
     assistant_initial_reply = response["choices"][0]["message"]["content"]
@@ -96,14 +198,32 @@ def chat_with_dynamic_prompt(system_prompt, conversation_history):
         # Append user input to the conversation history
         conversation_history.append({"role": "user", "content": user_input})
 
-        # Call the OpenAI API
+        # Calculate input tokens
+        input_tokens = calculate_input_tokens(conversation_history)
+
+        # Calculate remaining tokens for output
+        remaining_tokens_for_output = max_total_tokens - input_tokens
+        max_output_tokens = min(remaining_tokens_for_output, 100)  # Adjust as per your needs
+
+        # Make API call with max tokens for output
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
-            messages=messages + conversation_history
+            messages=messages + conversation_history,
+            max_tokens=max_output_tokens,
+            stop=["."]
+        )
+
+        # Make API call with max tokens for output
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=conversation_history,
+            max_tokens=max_output_tokens,
+            stop=["."]
         )
 
         # Extract and display the assistant's reply
         assistant_reply = response["choices"][0]["message"]["content"]
+        
         print(f"\nAssistant: {assistant_reply}\n")
 
         # Append the assistant's reply to the conversation history
@@ -133,63 +253,11 @@ def main():
 def index():
     return render_template("index.html")
 
-@app.route("/process-transcript", methods=["POST"])
-def process_transcript():
-    try:
-        data = request.get_json()
-        transcript = data.get("transcript", "")
-        
-        if not transcript:
-            return jsonify({"error": "No transcript provided"}), 400
+conversation_history = []  # Ensure this is defined globally
 
-        metrics = analyze_metrics(transcript)
-        system_prompt = generate_dynamic_prompt(metrics, transcript)
-
-        # Map metrics to voice parameters
-        stability, clarity, pitch, speed, depth = map_metrics_to_voice_params(metrics)
-
-        # Generate the assistant's reply using OpenAI's API
-        response_openai = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": transcript}]
-        )
-
-        assistant_reply = response_openai["choices"][0]["message"]["content"]  # Get the assistant's reply
-        response = requests.post(
-            f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
-            headers={"xi-api-key": elevenlabs_api_key, "Content-Type": "application/json"},
-            json={
-                "text": assistant_reply,  # Use only the assistant's response
-                "model_id": "eleven_monolingual_v1"
-            }
-        )
-
-        if response.status_code == 200:
-            voice_response = response.content
-        else:
-            print("Failed to generate audio. Error:", response.text)
-            return jsonify({"error": "Failed to generate audio"}), 500
-
-        # Save the audio response
-        with open("response.mp3", "wb") as audio_file:
-            audio_file.write(voice_response)
-
-        return jsonify({
-            "metrics": metrics,
-            "response_prompt": system_prompt,
-            "audio_generated": True,
-            "audio_file": "response.mp3"
-        })
-
-    except Exception as e:
-        # Print the error to the console for debugging
-        print("Error in process_transcript:", str(e))
-        # Return the error message to the client
-        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
-
-@app.route('/response.mp3')
-def serve_audio():
-    return send_from_directory('.', 'response.mp3')  # Serve from current directory
+@app.route('/<filename>')
+def serve_audio(filename):
+    return send_from_directory('.', filename)  # Serve from current directory
 
 def map_metrics_to_voice_params(metrics):
     stability = metrics.get("Adaptability vs. Consistency", 5) / 10

@@ -60,22 +60,23 @@ if (!SpeechRecognition) {
             })
                 .then((response) => response.json())
                 .then((data) => {
+                    console.log(`Received audio file: ${data.audio_file}`);
                     if (data.audio_generated) {
                         transcriptDiv.textContent = "";  // Clear any displayed text                    
-                        
-                        // Set audio source and play it
+
+                        // Set audio source dynamically to the generated audio file
                         const audioPlayer = document.getElementById("audioPlayer");
                         const audioSource = document.getElementById("audioSource");
-                        audioSource.src = "/response.mp3";
+                        audioSource.src = `/${data.audio_file}`;  // Use the exact filename returned from the backend
                         audioPlayer.style.display = "block";
                         audioPlayer.load();
                         audioPlayer.play();
                     } else {
                         transcriptDiv.textContent = "Error: Unable to process the transcript.";
                     }
-                })                
-            }
+                });
             startButton.textContent = "Start Recording";
             isRecording = false;
+        }
     });
-}
+    }
