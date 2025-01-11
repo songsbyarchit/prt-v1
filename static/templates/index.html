@@ -26,6 +26,10 @@
     <h1>Voice Input Interface</h1>
     <button id="startRecording">Start Recording</button>
     <div id="transcript">Transcript will appear here...</div>
+    <audio id="audioPlayer" controls style="display: none;">
+        <source id="audioSource" src="" type="audio/mpeg">
+        Your browser does not support the audio element.
+    </audio>    
 
     <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>

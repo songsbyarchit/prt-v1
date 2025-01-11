@@ -5,7 +5,8 @@ import sys
 import openai
 from metrics_analyzer import analyze_metrics
 from modes import MODES
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, send_from_directory
+import requests
 
 app = Flask(__name__, template_folder="static/templates")
 
@@ -24,6 +25,7 @@ install_dependencies()
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
 elevenlabs_api_key = os.getenv("ELEVENLABS_API_KEY")
+voice_id = os.getenv("VOICE_ID")
 
 def generate_dynamic_prompt(metrics, user_input):
     return (
@@ -133,21 +135,69 @@ def index():
 
 @app.route("/process-transcript", methods=["POST"])
 def process_transcript():
-    data = request.get_json()
-    transcript = data.get("transcript", "")
-    
-    if not transcript:
-        return jsonify({"error": "No transcript provided"}), 400
+    try:
+        data = request.get_json()
+        transcript = data.get("transcript", "")
+        
+        if not transcript:
+            return jsonify({"error": "No transcript provided"}), 400
 
-    # Process the transcript
-    metrics = analyze_metrics(transcript)
-    system_prompt = generate_dynamic_prompt(metrics, transcript)
+        metrics = analyze_metrics(transcript)
+        system_prompt = generate_dynamic_prompt(metrics, transcript)
 
-    # Return the metrics and system prompt for debugging purposes (can be removed later)
-    return jsonify({
-        "metrics": metrics,
-        "response_prompt": system_prompt
-    })
+        # Map metrics to voice parameters
+        stability, clarity, pitch, speed, depth = map_metrics_to_voice_params(metrics)
+
+        # Generate the assistant's reply using OpenAI's API
+        response_openai = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": transcript}]
+        )
+
+        assistant_reply = response_openai["choices"][0]["message"]["content"]  # Get the assistant's reply
+        response = requests.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+            headers={"xi-api-key": elevenlabs_api_key, "Content-Type": "application/json"},
+            json={
+                "text": assistant_reply,  # Use only the assistant's response
+                "model_id": "eleven_monolingual_v1"
+            }
+        )
+
+        if response.status_code == 200:
+            voice_response = response.content
+        else:
+            print("Failed to generate audio. Error:", response.text)
+            return jsonify({"error": "Failed to generate audio"}), 500
+
+        # Save the audio response
+        with open("response.mp3", "wb") as audio_file:
+            audio_file.write(voice_response)
+
+        return jsonify({
+            "metrics": metrics,
+            "response_prompt": system_prompt,
+            "audio_generated": True,
+            "audio_file": "response.mp3"
+        })
+
+    except Exception as e:
+        # Print the error to the console for debugging
+        print("Error in process_transcript:", str(e))
+        # Return the error message to the client
+        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+
+@app.route('/response.mp3')
+def serve_audio():
+    return send_from_directory('.', 'response.mp3')  # Serve from current directory
+
+def map_metrics_to_voice_params(metrics):
+    stability = metrics.get("Adaptability vs. Consistency", 5) / 10
+    clarity = metrics.get("Warmth vs. Neutrality", 5) / 10
+    pitch = (metrics.get("Optimism vs. Realism", 5) - 5) * 0.1 + 1  # Adjust pitch around 1.0
+    speed = (metrics.get("Action vs. Thinking", 5) - 5) * 0.05 + 1  # Adjust speed around 1.0
+    depth = metrics.get("Depth vs. Simplicity", 5) / 10  # A placeholder for potential future voice API parameters
+    return stability, clarity, pitch, speed, depth
 
 if __name__ == "__main__":
     app.run(debug=True)

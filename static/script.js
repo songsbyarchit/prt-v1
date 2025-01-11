@@ -47,7 +47,7 @@ if (!SpeechRecognition) {
         isRecording = false;
     });
 
-    // Handle recording end
+    // After processing transcript and receiving response from the backend
     recognition.addEventListener("end", () => {
         if (transcript) {
             // Send the transcript to the backend
@@ -60,18 +60,22 @@ if (!SpeechRecognition) {
             })
                 .then((response) => response.json())
                 .then((data) => {
-                    if (data.response) {
-                        transcriptDiv.textContent = `Response: "${data.response}"`;
+                    if (data.audio_generated) {
+                        transcriptDiv.textContent = "";  // Clear any displayed text                    
+                        
+                        // Set audio source and play it
+                        const audioPlayer = document.getElementById("audioPlayer");
+                        const audioSource = document.getElementById("audioSource");
+                        audioSource.src = "/response.mp3";
+                        audioPlayer.style.display = "block";
+                        audioPlayer.load();
+                        audioPlayer.play();
                     } else {
                         transcriptDiv.textContent = "Error: Unable to process the transcript.";
                     }
-                })
-                .catch((error) => {
-                    console.error("Error:", error);
-                    transcriptDiv.textContent = "An error occurred while sending the transcript.";
-                });
-        }        
-        startButton.textContent = "Start Recording";
-        isRecording = false;
+                })                
+            }
+            startButton.textContent = "Start Recording";
+            isRecording = false;
     });
 }
